@@ -1,67 +1,35 @@
-edge intent_transition {
-    has intent;
-}
-
 edge entity_transition {
     has entities;
 }
 
-graph dialogue_system {
-    has anchor dialogue_root;
-    spawn {
-        dialogue_root = spawn node::dialogue_root;
-        test_drive_state = spawn node::test_drive_state;
-        td_confirmation = spawn node::td_confirmation;
-        td_confirmed = spawn node::td_confirmed;
-        td_canceled = spawn node::td_canceled;
-
-        how_to_order_state = spawn node::how_to_order_state;
-
-        dialogue_root -[intent_transition(intent="test drive")]-> test_drive_state;
-        test_drive_state -[intent_transition(intent="cancel")]-> td_canceled;
-        test_drive_state -[entity_transition(entities=["name", "address"])]-> td_confirmation;
-        test_drive_state -[intent_transition(intent="provide name or address")]-> test_drive_state;
-        td_confirmation - [intent_transition(intent="yes")]-> td_confirmed;
-        td_confirmation - [intent_transition(intent="no")]-> test_drive_state;
-        td_confirmation - [intent_transition(intent="cancel")]-> td_canceled;
-
-        dialogue_root -[intent_transition(intent="order a tesla")]-> how_to_order_state;
-    }
-}
-
-walker init {
-    root {
-        spawn here --> graph::dialogue_system;
-        spawn here walker::talk;
-    }
-}
-
-walker talk {
-    has question;
-    has wlk_ctx = {};
-    has response;
-    root {
-        take --> node::dialogue_root;
-    }
-    dialogue_state {
-        if (!question) {
-            question = std.input("Question (Ctrl-C to exit)> ");
-            here::init_wlk_ctx;
+node cai_state {
+    has name;
+    can init_wlk_ctx {
+        new_wlk_ctx = {
+            "intent": null,
+            "entities": {},
+            "prev_state": null,
+            "next_state": null,
+            "respond": false
+        };
+        if ("entities" in visitor.wlk_ctx) {
+            // Carry over extracted entities from previous interaction
+            new_wlk_ctx["entities"] = visitor.wlk_ctx["entities"];
         }
-        here::nlu;
-        here::process;
-        if (visitor.wlk_ctx["respond"]) {
-            here::nlg;
-            std.out(response);
-            question = null;
-            take here;
-        } else {
-            take visitor.wlk_ctx["next_state"] else: take here;
+        visitor.wlk_ctx = new_wlk_ctx;
+    }
+    can nlu {}
+    can process {
+        if (visitor.wlk_ctx["prev_state"]): visitor.wlk_ctx["respond"] = true;
+        else {
+            visitor.wlk_ctx["next_state"] = net.root();
+            visitor.wlk_ctx["prev_state"] = here;
         }
     }
+    can nlg {}
 }
 
-node dialogue_state {
+node dialogue_state:cai_state {
     can bi_enc.infer;
     can tfm_ner.extract_entity;
 
@@ -74,7 +42,6 @@ node dialogue_state {
             candidate_type = "text"
         )[0]["predicted"]["label"];
     }
-
     can extract_entities {
         res = tfm_ner.extract_entity(visitor.question);
         for ent in res {
@@ -86,7 +53,6 @@ node dialogue_state {
             visitor.wlk_ctx["entities"][ent_type].l::append(ent_text);
         }
     }
-
     can init_wlk_ctx {
         new_wlk_ctx = {
             "intent": null,
@@ -198,11 +164,61 @@ node td_canceled:dialogue_state {
     }
 }
 
-// It is important that everything is loaded in therefore don't kill your jaseci session if you can avoid it
-//  since you likely initialized something important in the session previously
-// actions load module jaseci_kit.bi_enc
-// actions load module jaseci_ai_kit.use_qa
-//  actions load module jaseci_ai_kit.tfm_ner
-// Load model: jac run bi_enc.jac -walk load_model -ctx "{\"model_path\": \"dialogue_intent_mode_1l\"}"
-// Save model: jac run bi_enc.jac -walk save_model -ctx "{\"model_path\": \"dialogue_intent_model\"}"
-//
+edge intent_transition {
+    has intent;
+}
+
+graph dialogue_system {
+    has anchor dialogue_root;
+    spawn {
+        dialogue_root = spawn node::dialogue_root;
+        test_drive_state = spawn node::test_drive_state;
+        td_confirmation = spawn node::td_confirmation;
+        td_confirmed = spawn node::td_confirmed;
+        td_canceled = spawn node::td_canceled;
+
+        how_to_order_state = spawn node::how_to_order_state;
+
+        dialogue_root -[intent_transition(intent="test drive")]-> test_drive_state;
+        test_drive_state -[intent_transition(intent="cancel")]-> td_canceled;
+        test_drive_state -[entity_transition(entities=["name", "address"])]-> td_confirmation;
+        test_drive_state -[intent_transition(intent="provide name or address")]-> test_drive_state;
+        td_confirmation - [intent_transition(intent="yes")]-> td_confirmed;
+        td_confirmation - [intent_transition(intent="no")]-> test_drive_state;
+        td_confirmation - [intent_transition(intent="cancel")]-> td_canceled;
+
+        dialogue_root -[intent_transition(intent="order a tesla")]-> how_to_order_state;
+    }
+}
+
+walker init {
+    root {
+        spawn here --> graph::dialogue_system;
+        spawn here walker::talk;
+    }
+}
+
+walker talk {
+    has question;
+    has wlk_ctx = {};
+    has response;
+    root {
+        take --> node::dialogue_root;
+    }
+    dialogue_state {
+        if (!question) {
+            question = std.input("Question (Ctrl-C to exit)> ");
+            here::init_wlk_ctx;
+        }
+        here::nlu;
+        here::process;
+        if (visitor.wlk_ctx["respond"]) {
+            here::nlg;
+            std.out(response);
+            question = null;
+            take here;
+        } else {
+            take visitor.wlk_ctx["next_state"] else: take here;
+        }
+    }
+}
